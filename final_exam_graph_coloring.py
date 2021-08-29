@@ -67,13 +67,13 @@ MAX_CAPACITY = {
     "99": math.inf
 }
 
-SLOTS = [slot for slot in range(TOTAL_SLOTS)]
-SLOT_CAPACITY = { s:MAX_CAPACITY.copy() for s in range(TOTAL_SLOTS) }
 SLOT_PRIORITY_IDX = [4, 7, 5, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 1, 2, 0, 37, 38, 36, 40, 39, 41] 
 # SLOT_PRIORITY_IDX = [1, 4, 2, 7, 5, 0, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 37, 38, 36, 40, 39, 41]
 SLOT_PRIORITY = {s:p for p,s in enumerate(SLOT_PRIORITY_IDX)}
+SLOTS = SLOT_PRIORITY_IDX[:TOTAL_SLOTS]
+SLOT_CAPACITY = { s:MAX_CAPACITY.copy() for s in SLOTS }
 
-MAX_BRANCHING = 2
+MAX_BRANCHING = 4
 
 # Read all student enroll courses
 with open(regist_path, "r", encoding="utf-8-sig") as reg:
@@ -126,6 +126,12 @@ with open(conflicts_path, "r", encoding="utf-8-sig") as conflicts:
 CONFLICT_DICT = {}
 for con in CONFLICTS:
     CONFLICT_DICT[con[0] + "_" + con[1]] = int(con[2])
+    if con[0] not in CONFLICT_DICT:
+        CONFLICT_DICT[con[0]] = dict()
+    if con[1] not in CONFLICT_DICT:
+        CONFLICT_DICT[con[1]] = dict()
+    CONFLICT_DICT[con[0]][con[1]] = CONFLICT_DICT[con[1]][con[0]] = int(con[2])
+
 # create graph and add nodes
 G = nx.Graph()
 G.add_nodes_from(COURSE_LIST)
@@ -294,7 +300,7 @@ def calc_capacity_penalty_v1(occupancy, fa, slot, total_std_in_course, max_capac
 
 
 def calc_each_penalty(pen_count):
-    pen_value = {1: 0, 2: 10000, 3: 78, 4: 78, 5: 38, 6: 29, 7: 12}
+    pen_value = {1: 0, 2: 1000000, 3: 78, 4: 78, 5: 38, 6: 29, 7: 12}
     return {k: v*pen_count[k] for k, v in pen_value.items()}
 
 
@@ -306,6 +312,38 @@ def create_table(solution):
             table[slot] = list()
         table[slot].append(k)
     return table
+
+
+def count_penalty_single(solution, course, slot):
+    timetable = create_table(solution)
+    pen_count = {k: 0 for k in range(1, 8)}
+    if course not in CONFLICT_DICT:
+        return pen_count
+    nghb = CONFLICT_DICT[course]
+    # type-2: overlap
+    if slot in timetable:
+        pen_count[2] += sum([nghb[course] for course in timetable[slot] if course in nghb])
+    # type-3: slots 1 and 2
+    if slot % 3 == 1 and slot-1 in timetable:
+        pen_count[3] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
+    if slot % 3 == 0 and slot+1 in timetable:
+        pen_count[3] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
+    # type-4: slots 2 and 3
+    if slot % 3 == 2 and slot-1 in timetable:
+        pen_count[4] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
+    if slot % 3 == 1 and slot+1 in timetable:
+        pen_count[4] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
+    # type-5: slots 1 and 3
+    if slot % 3 == 2 and slot-2 in timetable:
+        pen_count[5] += sum([nghb[course] for course in timetable[slot-2] if course in nghb])
+    if slot % 3 == 0 and slot+2 in timetable:
+        pen_count[5] += sum([nghb[course] for course in timetable[slot+2] if course in nghb])
+    # type-6: slots 3 and 1(+1)
+    if slot % 3 == 0 and slot-1 in timetable:
+        pen_count[6] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
+    if slot % 3 == 2 and slot+1 in timetable:
+        pen_count[6] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
+    return pen_count
 
 
 def count_penalty2(solution, start_slot, end_slot):
@@ -480,18 +518,8 @@ class Schedule(object):
                     slot_penalty = {}
                     zero_penalty_cnt = 0
 
-                    for s in SLOT_PRIORITY_IDX:
-                        solution[n] = s
-                        if s % 3 == 0 and s != 0:
-                            penalty_count = count_penalty2(solution, s - 1, s + 2)
-                        elif s % 3 == 1:
-                            penalty_count = count_penalty2(solution, s - 1, s + 1)
-                        elif s % 3 == 2 and s != TOTAL_SLOTS-1:
-                            penalty_count = count_penalty2(solution, s - 2, s + 1)
-                        elif s == 0:
-                            penalty_count = count_penalty2(solution, s, s + 2)
-                        elif s == TOTAL_SLOTS-1:
-                            penalty_count = count_penalty2(solution, s - 2, s)
+                    for s in SLOT_PRIORITY_IDX[:TOTAL_SLOTS]:
+                        penalty_count = count_penalty_single(solution, n, s)
                         
                         if node_n == "001101" or node_n == "001102" or node_n == "001201":
                             capa_pen, all_used_capa = calc_capacity_penalty_for_eng(sol_occupancy, course_fa, s ,total_std_in_course,MAX_CAPACITY)
@@ -536,11 +564,8 @@ class Schedule(object):
                                 next_occ_penalty[chosen_slot] = 0
                             next_occ_penalty[chosen_slot] += capacity_penalty[chosen_slot]
                         next_solutions.append((next_solution, next_sol_occupancy, next_occ_penalty, tot_penalty+penalty))
-                        # if penalty > 0:
-                        #     break
-                        break
+                        # break
                 solutions = [x for _, x in sorted(enumerate(next_solutions), key=lambda x: (x[1][3], x[0]))[:MAX_BRANCHING**2]]
-                # print(min(next_solutions, key=lambda x: x[3])[3], end=' ')
         return solutions[0]
 
     # TODO Add fuction descriptions
