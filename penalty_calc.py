@@ -436,7 +436,7 @@ exceed_capacity_penalty = sum(slot_penalty.values()) //1
 penalties[1] += exceed_capacity_penalty
 penalties_count[1] += pencapa_count
 
-with open(penalty_file_path+penalty_file, "a") as p_file:
+with open(penalty_file_path+"/"+penalty_file, "a") as p_file:
     p_file.write("name:" + exam_table +"\n")
     p_file.write("total courses:          "+str(TOTAL_COURSES)+"\n")
     p_file.write("student having an exam: "+str(len(STUDENT_CLEAN))+"\n")

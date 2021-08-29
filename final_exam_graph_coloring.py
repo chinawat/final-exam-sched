@@ -69,8 +69,12 @@ MAX_CAPACITY = {
 
 SLOTS = [slot for slot in range(TOTAL_SLOTS)]
 SLOT_CAPACITY = { s:MAX_CAPACITY.copy() for s in range(TOTAL_SLOTS) }
+SLOT_PRIORITY_IDX = [4, 7, 5, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 1, 2, 0, 37, 38, 36, 40, 39, 41] 
+# SLOT_PRIORITY_IDX = [1, 4, 2, 7, 5, 0, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 37, 38, 36, 40, 39, 41]
+SLOT_PRIORITY = {s:p for p,s in enumerate(SLOT_PRIORITY_IDX)}
 
-capacity_penalty_value_slot = {}
+MAX_BRANCHING = 2
+
 # Read all student enroll courses
 with open(regist_path, "r", encoding="utf-8-sig") as reg:
     STUDENTS = list(csv.reader(reg, delimiter=" "))
@@ -187,7 +191,7 @@ def expo_pen(x):
     return (500 * (x - 80)) + (2**(2*((x / 10) - 1))) - (2**18)
 
 
-def calc_capacity_penalty_for_eng(fa, slot, total_std_in_course, max_capacity):
+def calc_capacity_penalty_for_eng(occupancy, fa, slot, total_std_in_course, max_capacity):
     fa_for_eng = ["02","03","04","05","06","08","15","16","18","19","20"]
     fa_for_eng = sorted(fa_for_eng, key = lambda fa : max_capacity[fa], reverse=True)
     available_fa = ["01","RB"] + fa_for_eng
@@ -195,7 +199,7 @@ def calc_capacity_penalty_for_eng(fa, slot, total_std_in_course, max_capacity):
     penalty = 0
     remain = total_std_in_course
     for fa in available_fa:
-        used_fa_capa = SLOT_CAPACITY[slot][fa]
+        used_fa_capa = occupancy[slot][fa]
         max80_fa_capa = (max_capacity[fa] * 80) // 100
     
         # penalty for eng in same slot
@@ -233,12 +237,12 @@ def calc_capacity_penalty_for_eng(fa, slot, total_std_in_course, max_capacity):
     return penalty, this_used_fa_capa
     
 
-def calc_capacity_penalty_v1(fa, slot, total_std_in_course, max_capacity):
+def calc_capacity_penalty_v1(occupancy, fa, slot, total_std_in_course, max_capacity):
     capacity_penalty = 0
     fa_penalty = 0
     rb_penalty = 0
-    used_rb_capa = SLOT_CAPACITY[slot]["RB"]
-    used_fa_capa = SLOT_CAPACITY[slot][fa]
+    used_rb_capa = occupancy[slot]["RB"]
+    used_fa_capa = occupancy[slot][fa]
     max_rb_capa = max_capacity["RB"]
     max_fa_capa = max_capacity[fa]
     max80_rb_capa = (max_rb_capa * 80) // 100
@@ -291,20 +295,16 @@ def calc_capacity_penalty_v1(fa, slot, total_std_in_course, max_capacity):
 
 def calc_each_penalty(pen_count):
     pen_value = {1: 0, 2: 10000, 3: 78, 4: 78, 5: 38, 6: 29, 7: 12}
-    penalty = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0}
-
-    for i in range(1, 8):
-        penalty[i] = pen_value[i] * pen_count[i]
-    return penalty
+    return {k: v*pen_count[k] for k, v in pen_value.items()}
 
 
 def create_table(solution):
     table = {}
     for k, v in solution.items():
-        if int(v) not in table:
-            table[int(v)] = [k]
-        else:
-            table[int(v)].append(k)
+        slot = int(v)
+        if slot not in table:
+            table[slot] = list()
+        table[slot].append(k)
     return table
 
 
@@ -391,15 +391,16 @@ class Schedule(object):
     Class representing Schedule
     """
 
-    def __init__(self, solution):
+    def __init__(self, solution_tuple):
+        (solution, _, occ_penalty, _) = solution_tuple
         self.solution = solution
         # self.wait_count = self.count_wait_penalty()
         self.penalty_count = count_penalty2(self.solution, 0, 41)
         self.wait_count = self.count_all_wait_penalty()
         self.penalty_count[7] = self.wait_count
         self.penalty_value = calc_each_penalty(self.penalty_count)
-        self.penalty_value[1] = sum(capacity_penalty_value_slot.values())
-        self.penalty_count[1] = sum(x > 0 for x in capacity_penalty_value_slot.values())
+        self.penalty_value[1] = sum(occ_penalty.values())
+        self.penalty_count[1] = sum(x > 0 for x in occ_penalty.values())
         self.total_penalty = self.calc_total_penalty(self.penalty_value)
 
     @classmethod
@@ -447,8 +448,9 @@ class Schedule(object):
         """
         Find schedule by graph coloring
         """
-        global SLOT_CAPACITY, capacity_penalty_value_slot
-        solution = {}
+        solutions = list()
+        solutions.append(({}, SLOT_CAPACITY.copy(), {}, 0))
+
         option1 = OPTION[:4]
         option2 = OPTION[4:]
 
@@ -468,79 +470,78 @@ class Schedule(object):
                 nodes_seq = [node for deg, std_en, conf, node in sorted_nodes]
 
             for n in nodes_seq:
-                slots = set([slot for slot in range(TOTAL_SLOTS)])
-                color = set([solution[c] for c in set(g.neighbors(n)) if c in solution.keys()])
-                slots = slots.difference(color)
-                
-                node_n = n
-                if len(n) > 6:
-                    node_n = n[:-4]
+                next_solutions = list()
+                for (solution, sol_occupancy, occ_penalty, tot_penalty) in solutions:
+                    node_n = n[:6]
+                    course_fa = COURSE_FACULTY.get(node_n,"99")
+                    total_std_in_course = STD_ENROLL_COURSES[n]
+                    used_capa = {}
+                    capacity_penalty = {}
+                    slot_penalty = {}
+                    zero_penalty_cnt = 0
 
-                course_fa = COURSE_FACULTY.get(node_n,"99")
-                total_std_in_course = STD_ENROLL_COURSES[n]
-                used_capa = {}
-                capacity_penalty = {}
-                slot_penalty = {}
-
-                for s in SLOTS:
-                    solution[n] = s
-                    if s % 3 == 0 and s != 0:
-                        penalty_count = count_penalty2(solution, s - 1, s + 2)
-                    elif s % 3 == 1:
-                        penalty_count = count_penalty2(solution, s - 1, s + 1)
-                    elif s % 3 == 2 and s != TOTAL_SLOTS-1:
-                        penalty_count = count_penalty2(solution, s - 2, s + 1)
-                    elif s == 0:
-                        penalty_count = count_penalty2(solution, s, s + 2)
-                    elif s == TOTAL_SLOTS-1:
-                        penalty_count = count_penalty2(solution, s - 2, s)
-                    
-                    if node_n == "001101" or node_n == "001102" or node_n == "001201":
-                        capa_pen, all_used_capa = calc_capacity_penalty_for_eng(course_fa, s ,total_std_in_course,MAX_CAPACITY)
-                        used_capa[s] = all_used_capa
-                    else:
-                        capa_pen, used_fa, used_rb = calc_capacity_penalty_v1(course_fa, s, total_std_in_course, MAX_CAPACITY)
-                        # Exclude CITIZENSHIP course -> online exam
-                        if node_n == "140104":
-                            capa_pen = 0
-                            used_fa = 0
-                            used_rb = 0
+                    for s in SLOT_PRIORITY_IDX:
+                        solution[n] = s
+                        if s % 3 == 0 and s != 0:
+                            penalty_count = count_penalty2(solution, s - 1, s + 2)
+                        elif s % 3 == 1:
+                            penalty_count = count_penalty2(solution, s - 1, s + 1)
+                        elif s % 3 == 2 and s != TOTAL_SLOTS-1:
+                            penalty_count = count_penalty2(solution, s - 2, s + 1)
+                        elif s == 0:
+                            penalty_count = count_penalty2(solution, s, s + 2)
+                        elif s == TOTAL_SLOTS-1:
+                            penalty_count = count_penalty2(solution, s - 2, s)
                         
-                        used_capa[s] = {}
-                        used_capa[s]["fa"] = used_fa
-                        used_capa[s]["RB"] = used_rb
-                    capacity_penalty[s] = capa_pen
+                        if node_n == "001101" or node_n == "001102" or node_n == "001201":
+                            capa_pen, all_used_capa = calc_capacity_penalty_for_eng(sol_occupancy, course_fa, s ,total_std_in_course,MAX_CAPACITY)
+                            used_capa[s] = all_used_capa
+                        else:
+                            capa_pen, used_fa, used_rb = calc_capacity_penalty_v1(sol_occupancy, course_fa, s, total_std_in_course, MAX_CAPACITY)
+                            # Exclude CITIZENSHIP course -> online exam
+                            if node_n == "140104":
+                                capa_pen = 0
+                                used_fa = 0
+                                used_rb = 0
+                            
+                            used_capa[s] = {}
+                            used_capa[s]["fa"] = used_fa
+                            used_capa[s]["RB"] = used_rb
+                        capacity_penalty[s] = capa_pen
 
-                    penalty_value = sum(calc_each_penalty(penalty_count).values())
-                    penalty_value += capacity_penalty[s]
-                    slot_penalty[s] = penalty_value
+                        penalty_value = sum(calc_each_penalty(penalty_count).values())
+                        penalty_value += capacity_penalty[s]
+                        slot_penalty[s] = penalty_value
+                        if penalty_value == 0:
+                            zero_penalty_cnt += 1
+                        if zero_penalty_cnt == MAX_BRANCHING:
+                            break
 
-                if slots:
-                    for k in color:
-                        slot_penalty.pop(k, None)
+                    sorted_pen_tuples = sorted(slot_penalty.items(), key=lambda x: (x[1], SLOT_PRIORITY[x[0]]))
+                    for chosen_slot, penalty in sorted_pen_tuples[:MAX_BRANCHING]:
+                        next_solution = solution.copy()
+                        next_sol_occupancy = {slot: v.copy() for slot, v in sol_occupancy.items()}
+                        next_occ_penalty = occ_penalty.copy()
+                        next_solution[n] = chosen_slot
 
-                lowest_pen_tuple = min(slot_penalty.items(), key=lambda x: x[1])
-                lowest_pen = lowest_pen_tuple[1]
+                        if node_n == "001101" or node_n == "001102" or node_n == "001201":
+                            for fa, capa in used_capa[chosen_slot].items():
+                                next_sol_occupancy[chosen_slot][fa] += capa
+                        else:
+                            next_sol_occupancy[chosen_slot][course_fa] += used_capa[chosen_slot]["fa"]
+                            next_sol_occupancy[chosen_slot]["RB"] += used_capa[chosen_slot]["RB"]
 
-                lowest_pen_slot = [
-                    k for k, v in slot_penalty.items() if v == lowest_pen
-                ]
-                slot_sorted = sorted(lowest_pen_slot, key=lambda slot: ((slot+2)%3, slot//3))
-                solution[n] = slot_sorted[0]
-
-                if node_n == "001101" or node_n == "001102" or node_n == "001201":
-                    for fa, capa in used_capa[slot_sorted[0]].items():
-                        SLOT_CAPACITY[slot_sorted[0]][fa] += capa
-                else:
-                    SLOT_CAPACITY[slot_sorted[0]][course_fa] += used_capa[slot_sorted[0]]["fa"]
-                    SLOT_CAPACITY[slot_sorted[0]]["RB"] += used_capa[slot_sorted[0]]["RB"]
-
-                if capacity_penalty[slot_sorted[0]] > 0:
-                    if slot_sorted[0] not in capacity_penalty_value_slot.keys():
-                        capacity_penalty_value_slot[slot_sorted[0]] = capacity_penalty[slot_sorted[0]]
-                    else:
-                        capacity_penalty_value_slot[slot_sorted[0]] += capacity_penalty[slot_sorted[0]]
-        return solution
+                        if capacity_penalty[chosen_slot] > 0:
+                            if chosen_slot not in next_occ_penalty:
+                                next_occ_penalty[chosen_slot] = 0
+                            next_occ_penalty[chosen_slot] += capacity_penalty[chosen_slot]
+                        next_solutions.append((next_solution, next_sol_occupancy, next_occ_penalty, tot_penalty+penalty))
+                        # if penalty > 0:
+                        #     break
+                        break
+                solutions = [x for _, x in sorted(enumerate(next_solutions), key=lambda x: (x[1][3], x[0]))[:MAX_BRANCHING**2]]
+                # print(min(next_solutions, key=lambda x: x[3])[3], end=' ')
+        return solutions[0]
 
     # TODO Add fuction descriptions
 
