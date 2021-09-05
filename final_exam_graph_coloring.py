@@ -13,7 +13,7 @@ OPTION = sys.argv[1]
 outout_file_postfix = OPTION
 
 # Valid slot 
-TOTAL_SLOTS = 42
+TOTAL_SLOTS = 24
 
 # data folder
 data_path = "data"
@@ -67,13 +67,15 @@ MAX_CAPACITY = {
     "99": math.inf
 }
 
-SLOT_PRIORITY_IDX = [4, 7, 5, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 1, 2, 0, 37, 38, 36, 40, 39, 41] 
+SLOT_PRIORITY_IDX = [3, 5, 2, 7, 4, 9, 6, 15, 8, 17, 14, 19, 16, 21, 18, 23, 20, 22, 1, 0, 11, 10, 13, 12, 25, 24, 27, 26]
+# SLOT_PRIORITY_IDX = [4, 7, 5, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 1, 2, 0, 37, 38, 36, 40, 39, 41]
 # SLOT_PRIORITY_IDX = [1, 4, 2, 7, 5, 0, 10, 8, 3, 13, 11, 6, 22, 14, 9, 25, 23, 12, 28, 26, 21, 31, 29, 24, 34, 32, 27, 35, 30, 33, 16, 19, 17, 20, 15, 18, 37, 38, 36, 40, 39, 41]
 SLOT_PRIORITY = {s:p for p,s in enumerate(SLOT_PRIORITY_IDX)}
 SLOTS = SLOT_PRIORITY_IDX[:TOTAL_SLOTS]
 SLOT_CAPACITY = { s:MAX_CAPACITY.copy() for s in SLOTS }
 
 MAX_BRANCHING = 4
+MAX_DEPTH = 2
 
 # Read all student enroll courses
 with open(regist_path, "r", encoding="utf-8-sig") as reg:
@@ -324,25 +326,36 @@ def count_penalty_single(solution, course, slot):
     if slot in timetable:
         pen_count[2] += sum([nghb[course] for course in timetable[slot] if course in nghb])
     # type-3: slots 1 and 2
-    if slot % 3 == 1 and slot-1 in timetable:
+    if slot % 2 == 1 and slot-1 in timetable:
         pen_count[3] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
-    if slot % 3 == 0 and slot+1 in timetable:
+    if slot % 2 == 0 and slot+1 in timetable:
         pen_count[3] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
-    # type-4: slots 2 and 3
-    if slot % 3 == 2 and slot-1 in timetable:
-        pen_count[4] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
-    if slot % 3 == 1 and slot+1 in timetable:
-        pen_count[4] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
-    # type-5: slots 1 and 3
-    if slot % 3 == 2 and slot-2 in timetable:
-        pen_count[5] += sum([nghb[course] for course in timetable[slot-2] if course in nghb])
-    if slot % 3 == 0 and slot+2 in timetable:
-        pen_count[5] += sum([nghb[course] for course in timetable[slot+2] if course in nghb])
-    # type-6: slots 3 and 1(+1)
-    if slot % 3 == 0 and slot-1 in timetable:
+    # type-6: slots 2 and 1(+1)
+    if slot % 2 == 0 and slot-1 in timetable:
         pen_count[6] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
-    if slot % 3 == 2 and slot+1 in timetable:
+    if slot % 2 == 1 and slot+1 in timetable:
         pen_count[6] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
+
+    # # type-3: slots 1 and 2
+    # if slot % 3 == 1 and slot-1 in timetable:
+    #     pen_count[3] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
+    # if slot % 3 == 0 and slot+1 in timetable:
+    #     pen_count[3] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
+    # # type-4: slots 2 and 3
+    # if slot % 3 == 2 and slot-1 in timetable:
+    #     pen_count[4] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
+    # if slot % 3 == 1 and slot+1 in timetable:
+    #     pen_count[4] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
+    # # type-5: slots 1 and 3
+    # if slot % 3 == 2 and slot-2 in timetable:
+    #     pen_count[5] += sum([nghb[course] for course in timetable[slot-2] if course in nghb])
+    # if slot % 3 == 0 and slot+2 in timetable:
+    #     pen_count[5] += sum([nghb[course] for course in timetable[slot+2] if course in nghb])
+    # # type-6: slots 3 and 1(+1)
+    # if slot % 3 == 0 and slot-1 in timetable:
+    #     pen_count[6] += sum([nghb[course] for course in timetable[slot-1] if course in nghb])
+    # if slot % 3 == 2 and slot+1 in timetable:
+    #     pen_count[6] += sum([nghb[course] for course in timetable[slot+1] if course in nghb])
     return pen_count
 
 
@@ -565,7 +578,7 @@ class Schedule(object):
                             next_occ_penalty[chosen_slot] += capacity_penalty[chosen_slot]
                         next_solutions.append((next_solution, next_sol_occupancy, next_occ_penalty, tot_penalty+penalty))
                         # break
-                solutions = [x for _, x in sorted(enumerate(next_solutions), key=lambda x: (x[1][3], x[0]))[:MAX_BRANCHING**2]]
+                solutions = [x for _, x in sorted(enumerate(next_solutions), key=lambda x: (x[1][3], x[0]))[:MAX_BRANCHING**MAX_DEPTH]]
         return solutions[0]
 
     # TODO Add fuction descriptions
